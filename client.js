@@ -5773,6 +5773,14 @@ window.__ModuleLoader__.load({
       '.mp-side-btn:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.08));color:var(--dsw-alias-label-primary,#f4f4f5)}',
       '.mp-side-btn:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary,#4176E6);outline-offset:1px}',
       '.mp-side-btn svg{display:block}',
+      '.mp-side-extras{display:none!important}',
+      // ── topbar transport ─────────────────────────────────────────────────────
+      '.mp-tp{position:fixed;top:9px;right:420px;z-index:2147482000;display:flex;align-items:center;gap:2px;height:30px;padding:0 8px;border-radius:999px;background:var(--dsw-alias-bg-layer-2,rgba(18,18,22,.72));border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));box-shadow:0 4px 16px rgba(0,0,0,.28);backdrop-filter:blur(10px);pointer-events:auto;color:var(--dsw-alias-label-primary,#e6e6ee);font-size:12px;user-select:none}',
+      '.mp-tp-wave{display:inline-flex;align-items:flex-end;gap:2px;width:34px;height:16px;margin-right:2px}',
+      '.mp-tp-wave i{width:3px;min-height:3px;border-radius:1px;background:linear-gradient(180deg,#7ee7d2,#2dd4bf);opacity:.95;transition:height .08s linear}',
+      '.mp-tp-btn{width:22px;height:22px;display:grid;place-items:center;border:0;border-radius:7px;background:transparent;color:var(--dsw-alias-label-secondary,#c9c9d1);cursor:pointer;padding:0;flex:none}',
+      '.mp-tp-btn:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.1));color:var(--dsw-alias-label-primary,#fff)}',
+      '.mp-tp-title{max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary,#a9a9b4);margin-left:2px}',
       '.mp-audio-host{position:fixed;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);opacity:0;pointer-events:none}',
     
       // ── responsive ──────────────────────────────────────────────────────────
@@ -14143,6 +14151,103 @@ window.__ModuleLoader__.load({
       )
     }
 
+    // ── src/ui/19-topbar.js
+    /**
+     * topbar seat: a compact transport pinned to the window title bar.
+     *
+     * The sidebar entry keeps its note icon; its hover controls are hidden by CSS
+     * (see `.mp-side-extras` in 90-theme.js) because on some DSH builds the host
+     * row is not positioned and they escape to the far right edge of the window.
+     */
+    
+    var TOP_BANDS = [0, 2, 4, 8, 14, 24, 40, 64, 96]
+    
+    function TopBarPlayer() {
+      var snap = usePlayerSnapshot()
+      var track = snap.queue[snap.index] || null
+      var levelPair = useState([0, 0, 0, 0, 0, 0, 0, 0])
+      var levels = levelPair[0]
+      var setLevels = levelPair[1]
+    
+      useEffect(
+        function () {
+          if (snap.playing !== true || snap.queue.length === 0) {
+            setLevels([0, 0, 0, 0, 0, 0, 0, 0])
+            return undefined
+          }
+          var frame = 0
+          var last = 0
+          function tick(now) {
+            if (now - last >= 80) {
+              last = now
+              var data = player.getWave()
+              if (data !== null) {
+                var next = []
+                for (var band = 0; band < TOP_BANDS.length - 1; band += 1) {
+                  var start = TOP_BANDS[band]
+                  var end = Math.min(TOP_BANDS[band + 1], data.length)
+                  var sum = 0
+                  for (var i = start; i < end; i += 1) sum += data[i]
+                  var avg = end > start ? sum / (end - start) : 0
+                  next.push(Math.min(0.96, Math.pow(Math.max(0, (avg - 2) / 255), 1.55)))
+                }
+                setLevels(next)
+              }
+            }
+            frame = requestAnimationFrame(tick)
+          }
+          frame = requestAnimationFrame(tick)
+          return function () {
+            cancelAnimationFrame(frame)
+          }
+        },
+        [snap.playing, snap.queue.length],
+      )
+    
+      if (track === null) return null
+    
+      function control(key, name, title, run) {
+        return h(
+          'button',
+          {
+            key: key,
+            type: 'button',
+            className: 'mp-tp-btn',
+            title: title,
+            'aria-label': title,
+            onClick: function (event) {
+              event.preventDefault()
+              event.stopPropagation()
+              run()
+            },
+          },
+          icon(name, 13),
+        )
+      }
+    
+      return h(
+        'div',
+        { className: 'mp-tp', 'data-mp-topbar': 'true' },
+        h(
+          'span',
+          { className: 'mp-tp-wave', 'aria-hidden': 'true' },
+          levels.map(function (level, index) {
+            return h('i', { key: index, style: { height: Math.round(3 + level * 15) + 'px' } })
+          }),
+        ),
+        control('prev', 'prev', t('page.prev'), function () {
+          player.prev()
+        }),
+        control('toggle', snap.playing ? 'pause' : 'play', snap.playing ? t('page.pause') : t('page.play'), function () {
+          player.toggle()
+        }),
+        control('next', 'next', t('page.next'), function () {
+          player.next()
+        }),
+        h('span', { className: 'mp-tp-title' }, trackTitleOf(track)),
+      )
+    }
+
     // ── src/99-plugin.js
     /**
      * plugin: seat registration and lifecycle.
@@ -14506,6 +14611,7 @@ window.__ModuleLoader__.load({
     
       mount('shell.overlay', { name: 'shell.overlay', id: 'music-player', order: 15 }, AudioHost)
       mount('shell.overlay', { name: 'shell.overlay', id: 'music-queue', order: 16 }, GlobalQueueHost)
+      mount('shell.overlay', { name: 'shell.overlay', id: 'music-topbar', order: 17 }, TopBarPlayer)
       mount(
         'sidebar.panellist',
         {

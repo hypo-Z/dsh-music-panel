@@ -360,6 +360,7 @@ function apply(ctx) {
 
   mount('shell.overlay', { name: 'shell.overlay', id: 'music-player', order: 15 }, AudioHost)
   mount('shell.overlay', { name: 'shell.overlay', id: 'music-queue', order: 16 }, GlobalQueueHost)
+  mount('shell.overlay', { name: 'shell.overlay', id: 'music-topbar', order: 17 }, TopBarPlayer)
   mount(
     'sidebar.panellist',
     {
