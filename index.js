@@ -38,7 +38,9 @@ export function apply(ctx, rawConfig) {
   const library = createLibrary({ getSettings: settings.read, stats })
   const playlists = createPlaylists({ dir: settings.dir })
   const providerStore = createProviderStore({ dir: settings.dir })
-  const onlineCache = createOnlineCache({ dir: settings.dir })
+  // 缓存上限：config.cacheMaxBytes（字节）优先，缺省沿用 lib/online-cache.js 的默认值
+  const cacheMaxBytes = Number(config.cacheMaxBytes) > 0 ? Number(config.cacheMaxBytes) : undefined
+  const onlineCache = createOnlineCache({ dir: settings.dir, maxBytes: cacheMaxBytes })
   const handle = createRoutes({ settings, library, playlists, stats, playback, favorites, providerStore, onlineCache })
 
   ctx.effect(() => {

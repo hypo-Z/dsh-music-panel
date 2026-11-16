@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict'
+import { realpathSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { createRoutes, onlineSongId, parseRange, resolveTrack } from '../lib/routes.js'
 import { fakeReq, fakeRes, tempWav } from './helpers.mjs'
 
-const file = await tempWav('song.wav', 1)
-const root = dirname(file)
-const outside = await tempWav('outside.wav', 1)
+// macOS 上 /var 是 /private/var 的软链，resolveTrack 返回 realpath，这里对齐
+const file = realpathSync(await tempWav('song.wav', 1))
+const root = realpathSync(dirname(file))
+const outside = realpathSync(await tempWav('outside.wav', 1))
 
 const settings = {
   read: async () => ({ roots: [root], depth: 2, extensions: ['wav'] }),
