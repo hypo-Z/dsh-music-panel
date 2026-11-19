@@ -3283,7 +3283,28 @@ window.__ModuleLoader__.load({
         errorStreak = 0
       }
     
+      // 桌宠联动：每次开始播放/切歌都让 dsh-pet 变身歌姬唱一句（暂不做冷却，方便测试）
+      function notifyPetMusic() {
+        try {
+          // broadcast 的 anim 是「要不要做动作」的布尔开关，不是动作名；
+          // 指定动作必须单独调 /anim，否则只会播默认的聊天动作。
+          fetch('/dsh-pet-7340/anim?pet=main&surface=web', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ name: '歌姬变身' }),
+            keepalive: true,
+          }).catch(function () {})
+          fetch('/dsh-pet-7340/broadcast?pet=main&surface=web', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ text: '这首歌不错～', anim: false, duration: 10000 }),
+            keepalive: true,
+          }).catch(function () {})
+        } catch (error) {}
+      }
+    
       function onPlay() {
+        notifyPetMusic()
         if (!state.playing) {
           patch({ playing: true })
           syncMediaSession()
@@ -5761,6 +5782,9 @@ window.__ModuleLoader__.load({
       '@media (prefers-reduced-motion:reduce){.mp-composer-lyric-layer.is-entering{animation:none}.mp-composer-lyric-layer.is-leaving{display:none;animation:none}}',
       '.mp-composer-lyrics.is-empty{display:none}',
       '.mp-composer-cluster{display:flex;align-items:center;gap:2px}',
+      '.mp-composer-wave{display:inline-flex;align-items:flex-end;gap:2px;height:22px;padding:0 8px 2px 2px;margin-right:2px}',
+      '.mp-composer-wave i{width:3px;min-height:3px;border-radius:1px;opacity:.95;transition:height .08s linear;box-shadow:0 0 6px -1px currentColor}',
+      '@media (prefers-reduced-motion:reduce){.mp-composer-wave i{transition:none}}',
       '.mp-cbtn{height:28px;min-width:28px;padding:0 6px;display:inline-flex;align-items:center;justify-content:center;gap:5px;border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary,#a1a1aa);font-size:12px;cursor:pointer;max-width:150px;overflow:hidden}',
       '.mp-cbtn:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.08));color:var(--dsw-alias-label-primary,#f4f4f5)}',
       '.mp-cbtn span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
@@ -5774,13 +5798,6 @@ window.__ModuleLoader__.load({
       '.mp-side-btn:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary,#4176E6);outline-offset:1px}',
       '.mp-side-btn svg{display:block}',
       '.mp-side-extras{display:none!important}',
-      // ── topbar transport ─────────────────────────────────────────────────────
-      '.mp-tp{position:fixed;top:9px;right:420px;z-index:2147482000;display:flex;align-items:center;gap:2px;height:30px;padding:0 8px;border-radius:999px;background:var(--dsw-alias-bg-layer-2,rgba(18,18,22,.72));border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.12));box-shadow:0 4px 16px rgba(0,0,0,.28);backdrop-filter:blur(10px);pointer-events:auto;color:var(--dsw-alias-label-primary,#e6e6ee);font-size:12px;user-select:none}',
-      '.mp-tp-wave{display:inline-flex;align-items:flex-end;gap:2px;width:34px;height:16px;margin-right:2px}',
-      '.mp-tp-wave i{width:3px;min-height:3px;border-radius:1px;background:linear-gradient(180deg,#7ee7d2,#2dd4bf);opacity:.95;transition:height .08s linear}',
-      '.mp-tp-btn{width:22px;height:22px;display:grid;place-items:center;border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-secondary,#c9c9d1);cursor:pointer;padding:0;flex:none}',
-      '.mp-tp-btn:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.1));color:var(--dsw-alias-label-primary,#fff)}',
-      '.mp-tp-title{max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-tertiary,#a9a9b4);margin-left:2px}',
       '.mp-audio-host{position:fixed;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);opacity:0;pointer-events:none}',
     
       // ── responsive ──────────────────────────────────────────────────────────
@@ -13175,6 +13192,66 @@ window.__ModuleLoader__.load({
       )
     }
     
+    var COMPOSER_WAVE_BANDS = [0, 2, 4, 8, 14, 24, 40, 64, 96]
+    var COMPOSER_WAVE_ZERO = [0, 0, 0, 0, 0, 0, 0, 0]
+    
+    /** 彩虹色波形：把频谱切成 8 段，每段一根竖条，色相从 0 到 360 铺满一圈。 */
+    function ComposerWave() {
+      var snap = usePlayerSnapshot()
+      var levelPair = useState(COMPOSER_WAVE_ZERO)
+      var levels = levelPair[0]
+      var setLevels = levelPair[1]
+      useEffect(
+        function () {
+          if (snap.playing !== true) {
+            setLevels(COMPOSER_WAVE_ZERO)
+            return undefined
+          }
+          var frame = 0
+          var last = 0
+          function tick(now) {
+            if (now - last >= 80) {
+              last = now
+              var data = player.getWave()
+              if (data !== null) {
+                var next = []
+                for (var band = 0; band < COMPOSER_WAVE_BANDS.length - 1; band += 1) {
+                  var start = COMPOSER_WAVE_BANDS[band]
+                  var end = Math.min(COMPOSER_WAVE_BANDS[band + 1], data.length)
+                  var sum = 0
+                  for (var i = start; i < end; i += 1) sum += data[i]
+                  var avg = end > start ? sum / (end - start) : 0
+                  next.push(Math.min(0.96, Math.pow(Math.max(0, (avg - 2) / 255), 1.55)))
+                }
+                setLevels(next)
+              }
+            }
+            frame = requestAnimationFrame(tick)
+          }
+          frame = requestAnimationFrame(tick)
+          return function () {
+            cancelAnimationFrame(frame)
+          }
+        },
+        [snap.playing],
+      )
+      return h(
+        'span',
+        { className: 'mp-composer-wave', 'aria-hidden': 'true' },
+        levels.map(function (level, index) {
+          var hue = Math.round((index * 360) / levels.length)
+          return h('i', {
+            key: index,
+            style: {
+              height: Math.round(3 + level * 15) + 'px',
+              color: 'hsl(' + hue + ' 92% 62%)',
+              background: 'linear-gradient(180deg,hsl(' + hue + ' 92% 70%),hsl(' + hue + ' 88% 52%))',
+            },
+          })
+        }),
+      )
+    }
+    
     function ComposerCluster() {
       var snap = usePlayerSnapshot()
       var ui = useStore(uiStore)
@@ -13184,6 +13261,19 @@ window.__ModuleLoader__.load({
       return h(
         'div',
         { className: 'mp-composer-cluster' },
+        h(ComposerWave, { key: 'wave' }),
+        h(
+          'button',
+          {
+            type: 'button',
+            className: 'mp-cbtn',
+            title: t('page.prev'),
+            onClick: function () {
+              player.prev()
+            },
+          },
+          icon('prev', 14),
+        ),
         h(
           'button',
           {
@@ -13195,6 +13285,18 @@ window.__ModuleLoader__.load({
             },
           },
           icon(snap.playing ? 'pause' : 'play', 14),
+        ),
+        h(
+          'button',
+          {
+            type: 'button',
+            className: 'mp-cbtn',
+            title: t('page.next'),
+            onClick: function () {
+              player.next()
+            },
+          },
+          icon('next', 14),
         ),
         h(
           'button',
@@ -14151,103 +14253,6 @@ window.__ModuleLoader__.load({
       )
     }
 
-    // ── src/ui/19-topbar.js
-    /**
-     * topbar seat: a compact transport pinned to the window title bar.
-     *
-     * The sidebar entry keeps its note icon; its hover controls are hidden by CSS
-     * (see `.mp-side-extras` in 90-theme.js) because on some DSH builds the host
-     * row is not positioned and they escape to the far right edge of the window.
-     */
-    
-    var TOP_BANDS = [0, 2, 4, 8, 14, 24, 40, 64, 96]
-    
-    function TopBarPlayer() {
-      var snap = usePlayerSnapshot()
-      var track = snap.queue[snap.index] || null
-      var levelPair = useState([0, 0, 0, 0, 0, 0, 0, 0])
-      var levels = levelPair[0]
-      var setLevels = levelPair[1]
-    
-      useEffect(
-        function () {
-          if (snap.playing !== true || snap.queue.length === 0) {
-            setLevels([0, 0, 0, 0, 0, 0, 0, 0])
-            return undefined
-          }
-          var frame = 0
-          var last = 0
-          function tick(now) {
-            if (now - last >= 80) {
-              last = now
-              var data = player.getWave()
-              if (data !== null) {
-                var next = []
-                for (var band = 0; band < TOP_BANDS.length - 1; band += 1) {
-                  var start = TOP_BANDS[band]
-                  var end = Math.min(TOP_BANDS[band + 1], data.length)
-                  var sum = 0
-                  for (var i = start; i < end; i += 1) sum += data[i]
-                  var avg = end > start ? sum / (end - start) : 0
-                  next.push(Math.min(0.96, Math.pow(Math.max(0, (avg - 2) / 255), 1.55)))
-                }
-                setLevels(next)
-              }
-            }
-            frame = requestAnimationFrame(tick)
-          }
-          frame = requestAnimationFrame(tick)
-          return function () {
-            cancelAnimationFrame(frame)
-          }
-        },
-        [snap.playing, snap.queue.length],
-      )
-    
-      if (track === null) return null
-    
-      function control(key, name, title, run) {
-        return h(
-          'button',
-          {
-            key: key,
-            type: 'button',
-            className: 'mp-tp-btn',
-            title: title,
-            'aria-label': title,
-            onClick: function (event) {
-              event.preventDefault()
-              event.stopPropagation()
-              run()
-            },
-          },
-          icon(name, 13),
-        )
-      }
-    
-      return h(
-        'div',
-        { className: 'mp-tp', 'data-mp-topbar': 'true' },
-        h(
-          'span',
-          { className: 'mp-tp-wave', 'aria-hidden': 'true' },
-          levels.map(function (level, index) {
-            return h('i', { key: index, style: { height: Math.round(3 + level * 15) + 'px' } })
-          }),
-        ),
-        control('prev', 'prev', t('page.prev'), function () {
-          player.prev()
-        }),
-        control('toggle', snap.playing ? 'pause' : 'play', snap.playing ? t('page.pause') : t('page.play'), function () {
-          player.toggle()
-        }),
-        control('next', 'next', t('page.next'), function () {
-          player.next()
-        }),
-        h('span', { className: 'mp-tp-title' }, trackTitleOf(track)),
-      )
-    }
-
     // ── src/99-plugin.js
     /**
      * plugin: seat registration and lifecycle.
@@ -14611,7 +14616,8 @@ window.__ModuleLoader__.load({
     
       mount('shell.overlay', { name: 'shell.overlay', id: 'music-player', order: 15 }, AudioHost)
       mount('shell.overlay', { name: 'shell.overlay', id: 'music-queue', order: 16 }, GlobalQueueHost)
-      mount('shell.overlay', { name: 'shell.overlay', id: 'music-topbar', order: 17 }, TopBarPlayer)
+      // 顶部标题栏那个浮动胶囊（music-topbar）已下线：它的播放控制与输入框右侧的
+      // ComposerCluster 重复，现在统一由下面那组控件承载。
       mount(
         'sidebar.panellist',
         {

@@ -122,6 +122,66 @@ function ComposerLyrics() {
   )
 }
 
+var COMPOSER_WAVE_BANDS = [0, 2, 4, 8, 14, 24, 40, 64, 96]
+var COMPOSER_WAVE_ZERO = [0, 0, 0, 0, 0, 0, 0, 0]
+
+/** 彩虹色波形：把频谱切成 8 段，每段一根竖条，色相从 0 到 360 铺满一圈。 */
+function ComposerWave() {
+  var snap = usePlayerSnapshot()
+  var levelPair = useState(COMPOSER_WAVE_ZERO)
+  var levels = levelPair[0]
+  var setLevels = levelPair[1]
+  useEffect(
+    function () {
+      if (snap.playing !== true) {
+        setLevels(COMPOSER_WAVE_ZERO)
+        return undefined
+      }
+      var frame = 0
+      var last = 0
+      function tick(now) {
+        if (now - last >= 80) {
+          last = now
+          var data = player.getWave()
+          if (data !== null) {
+            var next = []
+            for (var band = 0; band < COMPOSER_WAVE_BANDS.length - 1; band += 1) {
+              var start = COMPOSER_WAVE_BANDS[band]
+              var end = Math.min(COMPOSER_WAVE_BANDS[band + 1], data.length)
+              var sum = 0
+              for (var i = start; i < end; i += 1) sum += data[i]
+              var avg = end > start ? sum / (end - start) : 0
+              next.push(Math.min(0.96, Math.pow(Math.max(0, (avg - 2) / 255), 1.55)))
+            }
+            setLevels(next)
+          }
+        }
+        frame = requestAnimationFrame(tick)
+      }
+      frame = requestAnimationFrame(tick)
+      return function () {
+        cancelAnimationFrame(frame)
+      }
+    },
+    [snap.playing],
+  )
+  return h(
+    'span',
+    { className: 'mp-composer-wave', 'aria-hidden': 'true' },
+    levels.map(function (level, index) {
+      var hue = Math.round((index * 360) / levels.length)
+      return h('i', {
+        key: index,
+        style: {
+          height: Math.round(3 + level * 15) + 'px',
+          color: 'hsl(' + hue + ' 92% 62%)',
+          background: 'linear-gradient(180deg,hsl(' + hue + ' 92% 70%),hsl(' + hue + ' 88% 52%))',
+        },
+      })
+    }),
+  )
+}
+
 function ComposerCluster() {
   var snap = usePlayerSnapshot()
   var ui = useStore(uiStore)
@@ -131,6 +191,19 @@ function ComposerCluster() {
   return h(
     'div',
     { className: 'mp-composer-cluster' },
+    h(ComposerWave, { key: 'wave' }),
+    h(
+      'button',
+      {
+        type: 'button',
+        className: 'mp-cbtn',
+        title: t('page.prev'),
+        onClick: function () {
+          player.prev()
+        },
+      },
+      icon('prev', 14),
+    ),
     h(
       'button',
       {
@@ -142,6 +215,18 @@ function ComposerCluster() {
         },
       },
       icon(snap.playing ? 'pause' : 'play', 14),
+    ),
+    h(
+      'button',
+      {
+        type: 'button',
+        className: 'mp-cbtn',
+        title: t('page.next'),
+        onClick: function () {
+          player.next()
+        },
+      },
+      icon('next', 14),
     ),
     h(
       'button',

@@ -360,7 +360,8 @@ function apply(ctx) {
 
   mount('shell.overlay', { name: 'shell.overlay', id: 'music-player', order: 15 }, AudioHost)
   mount('shell.overlay', { name: 'shell.overlay', id: 'music-queue', order: 16 }, GlobalQueueHost)
-  mount('shell.overlay', { name: 'shell.overlay', id: 'music-topbar', order: 17 }, TopBarPlayer)
+  // 顶部标题栏那个浮动胶囊（music-topbar）已下线：它的播放控制与输入框右侧的
+  // ComposerCluster 重复，现在统一由下面那组控件承载。
   mount(
     'sidebar.panellist',
     {

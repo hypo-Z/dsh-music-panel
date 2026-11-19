@@ -471,7 +471,28 @@ function createPlayer() {
     errorStreak = 0
   }
 
+  // 桌宠联动：每次开始播放/切歌都让 dsh-pet 变身歌姬唱一句（暂不做冷却，方便测试）
+  function notifyPetMusic() {
+    try {
+      // broadcast 的 anim 是「要不要做动作」的布尔开关，不是动作名；
+      // 指定动作必须单独调 /anim，否则只会播默认的聊天动作。
+      fetch('/dsh-pet-7340/anim?pet=main&surface=web', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: '歌姬变身' }),
+        keepalive: true,
+      }).catch(function () {})
+      fetch('/dsh-pet-7340/broadcast?pet=main&surface=web', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: '这首歌不错～', anim: false, duration: 10000 }),
+        keepalive: true,
+      }).catch(function () {})
+    } catch (error) {}
+  }
+
   function onPlay() {
+    notifyPetMusic()
     if (!state.playing) {
       patch({ playing: true })
       syncMediaSession()
