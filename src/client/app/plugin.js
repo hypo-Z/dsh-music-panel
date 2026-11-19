@@ -302,6 +302,10 @@ function apply(ctx) {
 
   ctx.effect(function () {
     return function () {
+      // B 站直播开始播放时暂停音乐，避免两路声音叠在一起
+      window.addEventListener('bili-live-video-play', function () {
+        try { player.pause() } catch (error) {}
+      })
       player.suspend()
     }
   })
