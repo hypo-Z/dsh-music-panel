@@ -8,5 +8,3 @@
         roots: []
         depth: 4
         extensions: []
-        # 在线音频缓存上限（字节）：2 GiB。超过后按 LRU 淘汰到 90%。
-        cacheMaxBytes: 2147483648

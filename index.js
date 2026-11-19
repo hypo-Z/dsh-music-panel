@@ -8,16 +8,25 @@
  * @module dsh-music-panel
  */
 
-import { createFavorites } from './lib/favorites.js'
-import { createLibrary } from './lib/library.js'
-import { createPlayback } from './lib/playback.js'
-import { createPlaylists } from './lib/playlists.js'
-import { createOnlineCache } from './lib/online-cache.js'
-import { createProviderStore } from './lib/provider-store.js'
-import { createRoutes } from './lib/routes.js'
-import { createSettings } from './lib/settings.js'
-import { createStats } from './lib/stats.js'
-import { enqueueControl } from './lib/control.js'
+import { createFavorites } from './src/host/stores/favorites.js'
+import { createLibrary } from './src/host/services/media/library.js'
+import { createPlayback } from './src/host/services/playback/playback.js'
+import { createPlaylists } from './src/host/stores/playlists.js'
+import { createMediaCache } from './src/host/stores/media-cache.js'
+import { createProviderStore } from './src/host/providers/provider-store.js'
+import { createAccountStore } from './src/host/stores/accounts.js'
+import { createAccountReads } from './src/host/services/account-read.js'
+import { createKugouSessionManager } from './src/host/providers/kugou-session.js'
+import { createRoutes } from './src/host/http/routes.js'
+import { createSettings } from './src/host/stores/settings.js'
+import { createStats } from './src/host/stores/stats.js'
+import { createLyricState } from './src/host/stores/lyric-state.js'
+import { readLyricsFor } from './src/host/services/lyrics/lyrics.js'
+import { enqueueControl } from './src/host/services/playback/control.js'
+import { omni, registerBodianSource, registerLocalSource, registerOnlineSources, registerQishuiSource, resetSources } from './src/host/providers/sources/index.js'
+import { stopNeteaseService } from './src/host/services/netease-api.js'
+import { stopQqService } from './src/host/services/qq-api.js'
+import { stopAllKugouServices } from './src/host/services/kugou-api.js'
 
 /** Cordis plugin name. */
 export const name = 'music'
@@ -33,15 +42,100 @@ export function apply(ctx, rawConfig) {
   const config = rawConfig !== null && typeof rawConfig === 'object' ? rawConfig : {}
   const settings = createSettings({ dshHome: config.dshHome, seed: config })
   const stats = createStats({ dir: settings.dir })
+  const lyricState = createLyricState({ dir: settings.dir })
   const playback = createPlayback({ dir: settings.dir })
   const favorites = createFavorites({ dir: settings.dir })
   const library = createLibrary({ getSettings: settings.read, stats })
   const playlists = createPlaylists({ dir: settings.dir })
   const providerStore = createProviderStore({ dir: settings.dir })
-  // 缓存上限：config.cacheMaxBytes（字节）优先，缺省沿用 lib/online-cache.js 的默认值
-  const cacheMaxBytes = Number(config.cacheMaxBytes) > 0 ? Number(config.cacheMaxBytes) : undefined
-  const onlineCache = createOnlineCache({ dir: settings.dir, maxBytes: cacheMaxBytes })
-  const handle = createRoutes({ settings, library, playlists, stats, playback, favorites, providerStore, onlineCache })
+  const accountStore = createAccountStore({ dir: settings.dir })
+  const accountReads = createAccountReads({
+    accountStore,
+    providerStore,
+    omni,
+  })
+  // Bodian's upstream client wants a synchronous `{ get, save, clear }` repository.
+  // It shares the one credential file with every other platform; there is no second
+  // `createLoginStore` over the same path.
+  const bodianStore = {
+    get: (provider) => providerStore.getEntry(provider),
+    save: (provider, credentials) => providerStore.setLogin(provider, credentials, null),
+    clear: (provider) => providerStore.clear(provider),
+  }
+  // Qishui's package also wants a synchronous store; it carries the user for
+  // the display fields, so the adapter forwards it to setLogin's profile.
+  const qishuiStore = {
+    get: (provider) => providerStore.getEntry(provider),
+    save: (provider, credentials, user) => providerStore.setLogin(provider, credentials, user),
+    clear: (provider) => providerStore.clear(provider),
+  }
+  // Folia's media cache: written after a full play, with its own layout and one-time migration.
+  const mediaCache = createMediaCache({ dir: settings.dir })
+  void mediaCache.ensure()
+  const kugouSessions = createKugouSessionManager({ providerStore })
+
+  /**
+   * Reset in-memory stores after the data directory has been cleared. The route
+   * removes the files; this callback makes sure no memoized value survives and
+   * writes a fresh settings file with empty roots (the install-time seed must not
+   * re-populate the library after "clear all data").
+   */
+  async function resetData() {
+    library.clear()
+    stats.invalidate?.()
+    lyricState.invalidate?.()
+    playback.invalidate?.()
+    favorites.invalidate?.()
+    playlists.invalidate?.()
+    await providerStore.clear()
+    await accountReads.clearAll()
+    await mediaCache.clear('all')
+    settings.invalidate()
+    await settings.reset()
+    library.clear()
+  }
+
+  const handle = createRoutes({ settings, library, playlists, stats, playback, favorites, providerStore, accountStore, accountReads, mediaCache, kugouSessions, resetData, lyricState })
+
+
+  // Sources are registered once per load; the registry is the single list every
+  // future caller reads instead of branching on platform names.
+  ctx.effect(() => {
+    registerOnlineSources()
+    // Native upstream package (AGPL), registered outside the legacy factory.
+    registerBodianSource({ dir: settings.dir, store: bodianStore })
+    // Qishui is pure Node; its package owns the car protocol.
+    registerQishuiSource({ dir: settings.dir, store: qishuiStore })
+    if (library !== null && typeof library.scan === 'function') {
+      registerLocalSource({
+        scan: (options) => library.scan(options),
+        readLyrics: (file) => readLyricsFor(file),
+      })
+    }
+    return () => {
+      resetSources()
+      // Upstream services hold listening sockets and workers; they must not outlive the plugin.
+      void stopNeteaseService()
+      void stopQqService()
+      void stopAllKugouServices()
+    }
+  }, 'music: sources')
+
+  // KuGou standard tokens last under a day. Refresh while the app stays open;
+  // the settings route also refreshes on demand and validates Lite.
+  ctx.effect(() => {
+    let disposed = false
+    const tick = () => {
+      if (disposed) return
+      void kugouSessions.refreshIfDue('kugou').catch(() => {})
+    }
+    tick()
+    const timer = setInterval(tick, kugouSessions.intervalMs)
+    return () => {
+      disposed = true
+      clearInterval(timer)
+    }
+  }, 'music: kugou session refresh')
 
   ctx.effect(() => {
     const dispose = ctx.webServer.register({
@@ -79,9 +173,9 @@ export function apply(ctx, rawConfig) {
               },
               source: {
                 type: 'string',
-                enum: ['local', 'netease', 'qq', 'kugou', 'kugouLite'],
+                enum: ['local', 'netease', 'qq', 'kugouLite', 'bodian', 'qishui', 'navidrome'],
                 description:
-                  'Where to play from: local library (default), or the online providers NetEase / QQ Music / KuGou (free tracks work without signing in; sign in from the panel for higher quality).',
+                  'Where to play from: local library (default), the online providers NetEase / QQ Music / KuGou / Bodian / Qishui (free tracks work without signing in), or navidrome for a self-hosted Navidrome/Subsonic library (configure it in Settings → Online first).',
               },
             },
             required: ['action'],
@@ -118,7 +212,7 @@ export function apply(ctx, rawConfig) {
       systemPrompt.section({
         name: 'tool:music-online',
         order: 117,
-        text: '在线音乐：music_control 的 source 可设为 netease / qq / kugou / kugouLite（酷狗概念版），按歌名或歌手在线搜索并播放（未登录只播免费曲；用户可在「设置 → 在线」扫码登录以提升音质）。',
+        text: '在线音乐：music_control 的 source 可设为 netease / qq / kugouLite（酷狗，概念版客户端）/ bodian（波点）/ qishui（汽水）/ navidrome（自建 Navidrome 或 Subsonic 服务器），按歌名或歌手在线搜索并播放（未登录只播免费曲；用户可在「设置 → 在线」扫码登录以提升音质，Navidrome 则在此填写服务器地址与账号）。',
       })
       return () => {}
     }, 'music-online-prompt')
