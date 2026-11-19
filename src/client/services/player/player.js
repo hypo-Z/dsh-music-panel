@@ -605,7 +605,16 @@ function createPlayer() {
     } catch (error) {
       // Media Session is best effort.
     }
+    if (state.playing) syncMediaHandlers()
+    else clearMediaHandlers()
     syncMediaPosition(true)
+  }
+
+  function clearMediaHandlers() {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return
+    for (const name of ['play', 'pause', 'previoustrack', 'nexttrack', 'seekto']) {
+      try { navigator.mediaSession.setActionHandler(name, null) } catch (error) {}
+    }
   }
 
   function syncMediaHandlers() {
